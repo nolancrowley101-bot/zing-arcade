@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Neon Snake · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow: hidden; height: 100vh; user-select: none; touch-action: none; }
+  .wrap { display: flex; justify-content: center; padding: 0 12px; }
+  #c { border-radius: 18px; border: 1px solid var(--line); box-shadow: 0 0 60px rgba(56,225,255,.18); background: #0a0820; }
+  .help { text-align: center; color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>🐍 Neon Snake</h1>
+  <div class="stat"><small>Score</small><b id="score">0</b></div>
+  <div class="stat"><small>Best</small><b id="best">0</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div class="wrap"><canvas id="c" class="stage"></canvas></div>
+<p class="help">Arrow keys / WASD or swipe. Eat the glowing orbs, don’t hit the walls or yourself.</p>
+
+<div class="overlay show" id="start">
+  <div class="panel">
+    <h2>🐍 Neon Snake</h2>
+    <p>Every orb you eat plays a note. Eat fast to make a melody!</p>
+    <button class="btn" id="go">Start</button>
+  </div>
+</div>
+<div class="overlay" id="end">
+  <div class="panel">
+    <h2>Crashed!</h2>
+    <div class="big" id="final">0</div>
+    <p id="endmsg"></p>
+    <button class="btn" id="again">Play again</button>
+  </div>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $('c'), ctx = cv.getContext('2d');
+  const N = 20;
+  let cell, dpr, size;
+  function resize() {
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    size = Math.floor(Math.min(innerWidth - 24, innerHeight - 150, 640) / N) * N;
+    size = Math.max(size, 200);
+    cell = size / N;
+    cv.style.width = size + 'px'; cv.style.height = size + 'px';
+    cv.width = size * dpr; cv.height = size * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener('resize', resize); resize();
+  $('best').textContent = Arcade.best('snake');
+
+  let snake, dir = { x: 1, y: 0 }, queue = [], food, state = 'idle', score = 0, acc = 0, step = .13, parts = [], eatFlash = 0, prev;
+  function reset() {
+    snake = [{ x: 9, y: 10 }, { x: 8, y: 10 }, { x: 7, y: 10 }];
+    prev = snake.map(s => ({ ...s }));
+    dir = { x: 1, y: 0 }; queue = []; score = 0; acc = 0; step = 0.13; parts = []; eatFlash = 0;
+    $('score').textContent = 0; placeFood(); state = 'play';
+  }
+  function placeFood() {
+    if (snake.length >= N * N) { die(); return; }   // board full: you win (and avoid an endless search)
+    for (;;) {
+      const f = { x: (Math.random() * N) | 0, y: (Math.random() * N) | 0 };
+      if (!snake.some(s => s.x === f.x && s.y === f.y)) { food = f; return; }
+    }
+  }
+  function turn(x, y) {
+    if (state !== 'play') return;
+    const last = queue.length ? queue[queue.length - 1] : dir;
+    if (x === -last.x && y === -last.y) return;        // no reversing
+    if (x === last.x && y === last.y) return;
+    if (queue.length < 3) queue.push({ x, y });
+  }
+  addEventListener('keydown', e => {
+    const m = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] }[e.key];
+    if (m) { e.preventDefault(); turn(...m); }
+    if (e.code === 'Space' && $('end').classList.contains('show')) begin();
+  });
+  let sx, sy;
+  document.addEventListener('pointerdown', e => { if (!e.target.closest('button,a')) { sx = e.clientX; sy = e.clientY; } });
+  document.addEventListener('pointerup', e => {
+    if (sx == null) return; const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;
+    if (Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 1 : -1, 0); else turn(0, dy > 0 ? 1 : -1);
+  });
+
+  function tick() {
+    if (queue.length) dir = queue.shift();
+    prev = snake.map(s => ({ ...s }));
+    const h = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    const ate = h.x === food.x && h.y === food.y;
+    const body = ate ? snake : snake.slice(0, -1);
+    if (h.x < 0 || h.y < 0 || h.x >= N || h.y >= N || body.some(s => s.x === h.x && s.y === h.y)) return die();
+    snake.unshift(h);
+    if (ate) {
+      score++; $('score').textContent = score;
+      Arcade.note((score + 1) % 12 + 1, .25, 'triangle', .2); Arcade.note(((score + 1) % 12) + 6, .12, 'sine', .07);
+      for (let i = 0; i < 16; i++) { const a = Math.random() * 6.28, s = 40 + Math.random() * 160; parts.push({ x: (food.x + .5) * cell, y: (food.y + .5) * cell, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0 }); }
+      eatFlash = 1; step = Math.max(.065, step * .975); placeFood();
+    } else { snake.pop(); Arcade.tone(90, .03, 'sine', .015); }
+  }
+  function die() {
+    state = 'over';
+    const nb = Arcade.setBest('snake', score); $('best').textContent = Arcade.best('snake');
+    $('final').textContent = score;
+    $('endmsg').innerHTML = nb && score ? '<span class="badge-new">NEW BEST!</span>' : 'Best: ' + Arcade.best('snake');
+    Arcade.tone(300, .45, 'sawtooth', .12, 50);
+    for (const s of snake) for (let i = 0; i < 3; i++) parts.push({ x: (s.x + .5) * cell, y: (s.y + .5) * cell, vx: (Math.random() - .5) * 260, vy: (Math.random() - .5) * 260, t: 0 });
+    setTimeout(() => $('end').classList.add('show'), 600);
+  }
+  function begin() { $('start').classList.remove('show'); $('end').classList.remove('show'); reset(); Arcade.chord([0, 4], .3); }
+  $('go').onclick = begin; $('again').onclick = begin;
+
+  function draw() {
+    ctx.fillStyle = '#0a0820'; ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = 'rgba(255,255,255,.04)'; ctx.lineWidth = 1;
+    for (let i = 1; i < N; i++) { ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, size); ctx.moveTo(0, i * cell); ctx.lineTo(size, i * cell); ctx.stroke(); }
+    if (food) {
+      const p = 1 + Math.sin(performance.now() / 150) * .12;
+      ctx.save(); ctx.shadowColor = '#ff4fa3'; ctx.shadowBlur = 20; ctx.fillStyle = '#ff4fa3';
+      ctx.beginPath(); ctx.arc((food.x + .5) * cell, (food.y + .5) * cell, cell * .32 * p, 0, 6.2832); ctx.fill(); ctx.restore();
+    }
+    if (snake) {
+      const k = state === 'play' ? Math.min(acc / step, 1) : 1;
+      ctx.save(); ctx.shadowBlur = 14 + eatFlash * 14;
+      for (let i = snake.length - 1; i >= 0; i--) {
+        const s = snake[i], p = prev[i] || prev[prev.length - 1] || s;
+        const x = (p.x + (s.x - p.x) * k + .5) * cell, y = (p.y + (s.y - p.y) * k + .5) * cell;
+        const hue = (170 + i * 6) % 360, r = cell * (i === 0 ? .46 : .4 - Math.min(i, 12) * .004);
+        ctx.fillStyle = ctx.shadowColor = `hsl(${hue} 100% ${i === 0 ? 70 : 58}%)`;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill();
+        if (i === 0) { ctx.shadowBlur = 0; ctx.fillStyle = '#0a0820'; const ex = dir.y * cell * .14, ey = dir.x * cell * .14, fx = dir.x * cell * .1, fy = dir.y * cell * .1;
+          for (const sg of [-1, 1]) { ctx.beginPath(); ctx.arc(x + fx + sg * ex, y + fy + sg * ey, cell * .07, 0, 6.2832); ctx.fill(); } ctx.shadowBlur = 14; }
+      }
+      ctx.restore();
+    }
+    for (const p of parts) { ctx.fillStyle = `rgba(255,200,230,${Math.max(0, 1 - p.t / .6)})`; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); }
+  }
+
+  let last = performance.now();
+  (function loop(now) {
+    const dt = Math.min((now - last) / 1000, .05); last = now;
+    if (state === 'play') { acc += dt; while (acc >= step && state === 'play') { acc -= step; tick(); } }
+    for (const p of parts) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+    parts = parts.filter(p => p.t < .6); eatFlash = Math.max(0, eatFlash - dt * 4);
+    draw(); requestAnimationFrame(loop);
+  })(last);
+  snake = [{ x: 9, y: 10 }, { x: 8, y: 10 }, { x: 7, y: 10 }]; prev = snake; dir = { x: 1, y: 0 }; parts = []; eatFlash = 0; acc = 0; step = .13;
+  food = { x: 14, y: 6 };
+})();
+</script>
+</body>
+</html>

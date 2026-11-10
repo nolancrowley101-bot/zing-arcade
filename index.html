@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZING! Arcade</title>
+<meta name="description" content="Tiny, satisfying, dangerously addicting browser games.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="floaties" id="floaties"></div>
+
+<main class="hub">
+  <header>
+    <h1 class="logo" aria-label="ZING!"><span>Z</span><span>I</span><span>N</span><span>G</span><span>!</span></h1>
+    <p class="tag">Tiny games. Huge satisfaction. “One more go” guaranteed.</p>
+    <button class="icon-btn" id="mute" style="margin-top:14px"></button>
+  </header>
+
+  <section class="grid">
+    <a class="card" href="games/bubbles.html" style="--c:#38e1ff">
+      <span class="emoji">🫧</span>
+      <h3>Bubble Pop</h3>
+      <p>Pop as many bubbles as you can in 45 seconds. Chain pops to build a combo and make music.</p>
+      <span class="best" data-best="bubbles" data-label="Best"></span>
+    </a>
+    <a class="card" href="games/stack.html" style="--c:#ff4fa3">
+      <span class="emoji">🧱</span>
+      <h3>Stack</h3>
+      <p>Tap to drop the sliding block. Line it up perfectly and the tower keeps its width. Miss and it shrinks.</p>
+      <span class="best" data-best="stack" data-label="Best"></span>
+    </a>
+    <a class="card" href="games/merge.html" style="--c:#ffd23f">
+      <span class="emoji">🔢</span>
+      <h3>Merge</h3>
+      <p>Swipe to slide and merge matching tiles. Chase the 2048 tile, then keep going.</p>
+      <span class="best" data-best="merge" data-label="Best"></span>
+    </a>
+    <a class="card" href="games/factory.html" style="--c:#b6ff4a">
+      <span class="emoji">🔮</span>
+      <h3>Orb Factory</h3>
+      <p>Tap the orb, buy machines, watch numbers explode. It keeps working while you are away.</p>
+      <span class="best" data-best="factory" data-label="Total orbs" data-fmt="1"></span>
+    </a>
+    <a class="card" href="games/popit.html" style="--c:#8b5cff">
+      <span class="emoji">🎈</span>
+      <h3>Pop It</h3>
+      <p>The digital fidget toy. Press every bubble, flip the board, repeat. No score, just vibes.</p>
+      <span class="best" data-best="popit" data-label="Total pops"></span>
+    </a>
+    <a class="card" href="games/snake.html" style="--c:#2ee6c8">
+      <span class="emoji">🐍</span>
+      <h3>Neon Snake</h3>
+      <p>The classic, but glowing. Every orb you eat plays a note, so fast eating makes music.</p>
+      <span class="best" data-best="snake" data-label="Best"></span>
+    </a>
+    <a class="card" href="games/chain.html" style="--c:#ff7a45">
+      <span class="emoji">💥</span>
+      <h3>Chain Pop</h3>
+      <p>One tap per level. Light the fuse and watch the explosions ripple from dot to dot.</p>
+      <span class="best" data-best="chain" data-label="Levels cleared"></span>
+    </a>
+    <a class="card" href="games/tiles.html" style="--c:#ff4fa3">
+      <span class="emoji">🎹</span>
+      <h3>Beat Tiles</h3>
+      <p>Tap the falling tiles, each one plays a note. Faster and faster, don’t miss a beat.</p>
+      <span class="best" data-best="tiles" data-label="Best"></span>
+    </a>
+    <a class="card" href="games/sand.html" style="--c:#ffd23f">
+      <span class="emoji">⏳</span>
+      <h3>Sand Garden</h3>
+      <p>Pour rainbow sand, build stone ramps, and watch it all pile up. Pure relaxation.</p>
+      <span class="best" data-best="sand" data-label="Grains poured" data-fmt="1"></span>
+    </a>
+    <a class="card" href="games/gems.html" style="--c:#c06bff">
+      <span class="emoji">💎</span>
+      <h3>Gem Match</h3>
+      <p>Swap gems, match three, and watch the cascades pop. 25 moves, how high can you score?</p>
+      <span class="best" data-best="gems" data-label="Best"></span>
+    </a>
+    <a class="card" href="games/bricks.html" style="--c:#ff9a3d">
+      <span class="emoji">🏓</span>
+      <h3>Brick Bash</h3>
+      <p>Bounce the ball, smash the wall. Chain bricks without touching the paddle for huge combos.</p>
+      <span class="best" data-best="bricks" data-label="Best"></span>
+    </a>
+    <a class="card" href="games/sort.html" style="--c:#2ee6a6">
+      <span class="emoji">🧪</span>
+      <h3>Tube Sort</h3>
+      <p>Pour colours between tubes until each one is perfectly sorted. Calm, clever, and very hard to put down.</p>
+      <span class="best" data-best="sort" data-label="On level"></span>
+    </a>
+    <a class="card" href="games/flap.html" style="--c:#38b6ff">
+      <span class="emoji">🪽</span>
+      <h3>Neon Flap</h3>
+      <p>One tap, one bird, endless glowing gates. Every gate plays a note. Just one more try.</p>
+      <span class="best" data-best="flap" data-label="Best"></span>
+    </a>
+  </section>
+
+  <footer>Best scores are saved in your browser. 🔊 Sound on for max satisfaction.</footer>
+</main>
+
+<script src="js/common.js"></script>
+<script>
+  document.querySelectorAll('[data-best]').forEach(el => {
+    const v = Arcade.best(el.dataset.best);
+    el.textContent = v ? `${el.dataset.label}: ${el.dataset.fmt ? Arcade.fmt(v) : v}` : 'Not played yet';
+  });
+  const f = document.getElementById('floaties');
+  const cols = ['#ff4fa3', '#38e1ff', '#b6ff4a', '#ffd23f', '#8b5cff'];
+  for (let i = 0; i < 22; i++) {
+    const e = document.createElement('i');
+    const s = 20 + Math.random() * 90;
+    e.style.cssText = `left:${Math.random() * 100}%;width:${s}px;height:${s}px;background:${cols[i % cols.length]};` +
+      `animation-duration:${14 + Math.random() * 22}s;animation-delay:${-Math.random() * 30}s`;
+    f.appendChild(e);
+  }
+</script>
+</body>
+</html>

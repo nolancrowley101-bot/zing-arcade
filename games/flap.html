@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Neon Flap · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow: hidden; height: 100vh; user-select: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  .bar { pointer-events: none; } .bar > * { pointer-events: auto; }
+  #big { position: fixed; left: 0; right: 0; top: 18%; text-align: center; font-size: 84px; font-weight: 900; pointer-events: none; color: #fff; text-shadow: 0 6px 0 rgba(0,0,0,.25), 0 0 40px rgba(56,225,255,.6); z-index: 3; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>🪽 Neon Flap</h1>
+  <div class="stat"><small>Best</small><b id="best">0</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div id="big"></div>
+
+<div class="overlay show" id="start">
+  <div class="panel">
+    <h2>🪽 Neon Flap</h2>
+    <p>Tap, click or press <b>Space</b> to flap. Glide through the gaps, and every gate plays a note.</p>
+    <button class="btn" id="go">Start</button>
+  </div>
+</div>
+<div class="overlay" id="end">
+  <div class="panel">
+    <h2>Crash!</h2>
+    <div class="big" id="final">0</div>
+    <p id="endmsg"></p>
+    <button class="btn" id="again">Play again</button>
+  </div>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $('c'), ctx = cv.getContext('2d');
+  let W, H, dpr, S;
+  function resize() { dpr = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); S = Math.min(1.3, Math.max(.7, H / 700)); }
+  resize(); addEventListener('resize', resize);
+  $('best').textContent = Arcade.best('flap');
+
+  let bird, pipes = [], parts = [], stars, state = 'idle', score = 0, nextPipe = 0, bg = 0, hue = 190, dist = 0, flash = 0;
+  const GRAV = () => 1500 * S, FLAP = () => -460 * S, SPEED = () => (200 + Math.min(score * 4, 120)) * S;
+  const GAP = () => Math.max(150, 185 * S), PW = () => 70 * S;
+
+  stars = Array.from({ length: 50 }, () => ({ x: Math.random(), y: Math.random(), s: .5 + Math.random() * 1.5, v: .1 + Math.random() * .3 }));
+
+  function reset() {
+    bird = { x: Math.min(W * .28, 220), y: H / 2, vy: 0, r: 15 * S, rot: 0 };
+    pipes = []; parts = []; score = 0; nextPipe = W * .8; dist = 0; flash = 0; hue = 190;
+    $('big').textContent = 0; state = 'play'; flap();
+  }
+  function flap() {
+    if (state !== 'play') return;
+    bird.vy = FLAP();
+    Arcade.tone(420, .08, 'sine', .08, 700);
+    for (let i = 0; i < 5; i++) parts.push({ x: bird.x - 8, y: bird.y + 6, vx: -60 - Math.random() * 80, vy: 40 + Math.random() * 80, t: 0 });
+  }
+  function addPipe() {
+    const gap = GAP(), min = 110 + gap / 2, max = H - 90 - gap / 2;
+    pipes.push({ x: W + 40, c: min + Math.random() * Math.max(10, max - min), scored: false, w: PW() });
+  }
+
+  function die() {
+    state = 'over'; flash = 1;
+    const nb = Arcade.setBest('flap', score); $('best').textContent = Arcade.best('flap');
+    $('final').textContent = score;
+    $('endmsg').innerHTML = nb && score ? '<span class="badge-new">NEW BEST!</span>' : 'Best: ' + Arcade.best('flap');
+    Arcade.tone(240, .5, 'sawtooth', .13, 50);
+    for (let i = 0; i < 24; i++) { const a = Math.random() * 6.28, s = 80 + Math.random() * 260; parts.push({ x: bird.x, y: bird.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0, hot: true }); }
+    setTimeout(() => $('end').classList.add('show'), 650);
+  }
+
+  function update(dt) {
+    bg += dt;
+    if (state === 'play') {
+      bird.vy += GRAV() * dt; bird.y += bird.vy * dt; bird.rot = Math.max(-.5, Math.min(1.1, bird.vy / (600 * S)));
+      const sp = SPEED(); dist += sp * dt; nextPipe -= sp * dt;
+      if (nextPipe <= 0) { addPipe(); nextPipe = Math.max(230, 300 * S) + Math.random() * 40; }
+      const gap = GAP();
+      for (const p of pipes) {
+        p.x -= sp * dt;
+        if (!p.scored && p.x + p.w < bird.x - bird.r) {
+          p.scored = true; score++; $('big').textContent = score; hue = (190 + score * 14) % 360;
+          Arcade.note((score - 1) % 15 + 2, .25, 'triangle', .18); Arcade.note((score - 1) % 15 + 7, .12, 'sine', .06);
+        }
+        // collision: circle vs two rects
+        if (bird.x + bird.r > p.x && bird.x - bird.r < p.x + p.w) {
+          const top = p.c - gap / 2, bot = p.c + gap / 2;
+          if (bird.y - bird.r < top || bird.y + bird.r > bot) die();
+        }
+      }
+      pipes = pipes.filter(p => p.x > -p.w - 20);
+      if (bird.y + bird.r > H - 40 || bird.y - bird.r < 0) { if (state === 'play') die(); }
+    } else if (state === 'over') { bird.vy += GRAV() * dt; bird.y = Math.min(bird.y + bird.vy * dt, H - 40 - bird.r); bird.rot = 1.2; }
+    for (const p of parts) { p.t += dt; p.x += (p.vx - (state === 'play' ? SPEED() : 0)) * dt; p.y += p.vy * dt; if (p.hot) p.vy += 600 * dt; }
+    parts = parts.filter(p => p.t < .6); flash = Math.max(0, flash - dt * 2.5);
+  }
+
+  function draw() {
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, `hsl(${(hue + 240) % 360} 55% 12%)`); g.addColorStop(1, `hsl(${(hue + 290) % 360} 60% 22%)`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    for (const s of stars) { const x = ((s.x * W - bg * 30 * s.v * S) % W + W) % W; ctx.fillStyle = `rgba(255,255,255,${.25 + s.s * .2})`; ctx.fillRect(x, s.y * (H - 60), s.s, s.s); }
+    // pipes
+    const gap = GAP();
+    for (const p of pipes) {
+      const col = `hsl(${hue} 90% 60%)`;
+      ctx.save(); ctx.shadowColor = col; ctx.shadowBlur = 18; ctx.fillStyle = col;
+      const top = p.c - gap / 2, bot = p.c + gap / 2;
+      ctx.fillRect(p.x, -10, p.w, top + 10); ctx.fillRect(p.x, bot, p.w, H - bot);
+      ctx.restore();
+      ctx.fillStyle = 'rgba(255,255,255,.28)'; ctx.fillRect(p.x + 6, -10, 6, top + 10); ctx.fillRect(p.x + 6, bot, 6, H - bot);
+      ctx.fillStyle = `hsl(${hue} 90% 72%)`; ctx.fillRect(p.x - 6, top - 22, p.w + 12, 22); ctx.fillRect(p.x - 6, bot, p.w + 12, 22);
+    }
+    // ground
+    ctx.fillStyle = '#0a0820'; ctx.fillRect(0, H - 40, W, 40);
+    ctx.strokeStyle = `hsl(${hue} 90% 60%)`; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, H - 40); ctx.lineTo(W, H - 40); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.1)'; for (let x = -(dist % 40); x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, H - 40); ctx.lineTo(x - 20, H); ctx.stroke(); }
+    for (const p of parts) { ctx.fillStyle = p.hot ? `rgba(255,120,160,${1 - p.t / .6})` : `rgba(255,255,255,${.5 * (1 - p.t / .6)})`; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); }
+    if (bird) {
+      ctx.save(); ctx.translate(bird.x, bird.y); ctx.rotate(bird.rot);
+      ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 20; ctx.fillStyle = '#ffd23f';
+      ctx.beginPath(); ctx.arc(0, 0, bird.r, 0, 6.2832); ctx.fill(); ctx.shadowBlur = 0;
+      const wy = Math.sin(bg * 18) * bird.r * .5; ctx.fillStyle = '#ff9a3d'; ctx.beginPath(); ctx.ellipse(-bird.r * .3, wy, bird.r * .55, bird.r * .32, 0, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(bird.r * .35, -bird.r * .25, bird.r * .3, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#0a0820'; ctx.beginPath(); ctx.arc(bird.r * .45, -bird.r * .25, bird.r * .13, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#ff5a5a'; ctx.beginPath(); ctx.moveTo(bird.r * .8, 0); ctx.lineTo(bird.r * 1.35, bird.r * .1); ctx.lineTo(bird.r * .8, bird.r * .3); ctx.fill();
+      ctx.restore();
+    }
+    if (flash > 0) { ctx.fillStyle = `rgba(255,255,255,${flash * .5})`; ctx.fillRect(0, 0, W, H); }
+  }
+
+  let last = performance.now();
+  (function loop(now) {
+    const dt = Math.min((now - last) / 1000, .033); last = now;
+    if (bird && state !== 'idle') update(dt); else { bg += dt; if (bird) bird.y = H / 2 + Math.sin(bg * 3) * 12; }
+    draw(); requestAnimationFrame(loop);
+  })(last);
+
+  cv.addEventListener('pointerdown', flap);
+  addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); if (state === 'play') flap(); else if ($('end').classList.contains('show')) begin(); }
+  });
+  function begin() { $('start').classList.remove('show'); $('end').classList.remove('show'); reset(); }
+  $('go').onclick = begin; $('again').onclick = begin;
+  bird = { x: Math.min(W * .28, 220), y: H / 2, vy: 0, r: 15 * S, rot: 0 }; pipes = []; parts = [];
+})();
+</script>
+</body>
+</html>

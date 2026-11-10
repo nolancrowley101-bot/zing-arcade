@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Gem Match · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow: hidden; height: 100vh; user-select: none; touch-action: none; }
+  .wrap { display: flex; justify-content: center; padding: 0 12px; }
+  #c { border-radius: 20px; background: rgba(255,255,255,.05); border: 1px solid var(--line); touch-action: none; }
+  .help { text-align: center; color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  #say { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); font-weight: 900; font-size: 38px; color: var(--yellow); pointer-events: none; opacity: 0; text-shadow: 0 4px 0 rgba(0,0,0,.3), 0 0 24px rgba(255,210,63,.7); z-index: 4; white-space: nowrap; }
+  #say.bump { animation: sb 1s ease-out; }
+  @keyframes sb { 0% { opacity: 0; transform: translateX(-50%) scale(.5); } 20% { opacity: 1; transform: translateX(-50%) scale(1.15); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) translateY(-24px); } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>💎 Gem Match</h1>
+  <div class="stat"><small>Moves</small><b id="moves">25</b></div>
+  <div class="stat"><small>Score</small><b id="score">0</b></div>
+  <div class="stat"><small>Best</small><b id="best">0</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div class="wrap"><canvas id="c"></canvas></div>
+<p class="help">Swap two neighbouring gems (tap, or drag) to line up 3 or more. Big cascades = big points.</p>
+<div id="say"></div>
+
+<div class="overlay show" id="start">
+  <div class="panel">
+    <h2>💎 Gem Match</h2>
+    <p>You have 25 moves. Match 3+ gems, chain cascades, and go for a high score.</p>
+    <button class="btn" id="go">Start</button>
+  </div>
+</div>
+<div class="overlay" id="end">
+  <div class="panel">
+    <h2>Out of moves!</h2>
+    <div class="big" id="final">0</div>
+    <p id="endmsg"></p>
+    <button class="btn" id="again">Play again</button>
+  </div>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $('c'), ctx = cv.getContext('2d');
+  const N = 8, TYPES = 6, MOVES = 25;
+  const HUE = [350, 190, 120, 48, 275, 22];
+  let cs, dpr, size, grid, parts = [], texts = [], busy = false, sel = null, score = 0, moves = MOVES, state = 'idle', hint = 0;
+  $('best').textContent = Arcade.best('gems');
+
+  function resize() {
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    size = Math.floor(Math.min(innerWidth - 24, innerHeight - 150, 640) / N) * N; size = Math.max(size, 240); cs = size / N;
+    cv.style.width = size + 'px'; cv.style.height = size + 'px'; cv.width = size * dpr; cv.height = size * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resize(); addEventListener('resize', resize);
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // tween helper driven by the draw loop's clock
+  function tween(ms, fn) { return new Promise(res => { const t0 = performance.now(); (function f(now) { const k = Math.min(1, (now - t0) / ms); fn(k); k < 1 ? requestAnimationFrame(f) : res(); })(t0); }); }
+  const ease = k => 1 - Math.pow(1 - k, 3);
+
+  const gem = (r, c, t) => ({ t, r, c, x: c * cs, y: r * cs, s: 1, a: 1 });
+  const rnd = () => (Math.random() * TYPES) | 0;
+
+  function findMatches(g = grid) {
+    const hit = new Set();
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      const t = g[r][c] && g[r][c].t; if (t == null) continue;
+      if (c < N - 2 && g[r][c + 1] && g[r][c + 2] && g[r][c + 1].t === t && g[r][c + 2].t === t) { let k = c; while (k < N && g[r][k] && g[r][k].t === t) hit.add(r * N + k++); }
+      if (r < N - 2 && g[r + 1][c] && g[r + 2][c] && g[r + 1][c].t === t && g[r + 2][c].t === t) { let k = r; while (k < N && g[k][c] && g[k][c].t === t) hit.add(k++ * N + c); }
+    }
+    return hit;
+  }
+  function hasMove() {
+    const tg = grid.map(row => row.map(x => ({ t: x.t })));
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) for (const [dr, dc] of [[0, 1], [1, 0]]) {
+      const r2 = r + dr, c2 = c + dc; if (r2 >= N || c2 >= N) continue;
+      [tg[r][c], tg[r2][c2]] = [tg[r2][c2], tg[r][c]];
+      const m = findMatches(tg); [tg[r][c], tg[r2][c2]] = [tg[r2][c2], tg[r][c]];
+      if (m.size) return true;
+    }
+    return false;
+  }
+  function fresh() {
+    do {
+      grid = Array.from({ length: N }, (_, r) => Array.from({ length: N }, (_, c) => gem(r, c, rnd())));
+      // remove initial matches
+      let tries = 0; while (findMatches().size && tries++ < 50) for (const i of findMatches()) { const r = (i / N) | 0, c = i % N; grid[r][c].t = rnd(); }
+    } while (findMatches().size || !hasMove());
+  }
+
+  async function swap(a, b, back) {
+    const A = grid[a.r][a.c], B = grid[b.r][b.c];
+    const ax = A.x, ay = A.y, bx = B.x, by = B.y;
+    await tween(130, k => { const e = ease(k); A.x = ax + (bx - ax) * e; A.y = ay + (by - ay) * e; B.x = bx + (ax - bx) * e; B.y = by + (ay - by) * e; });
+    grid[a.r][a.c] = B; grid[b.r][b.c] = A; A.r = b.r; A.c = b.c; B.r = a.r; B.c = a.c;
+    A.x = A.c * cs; A.y = A.r * cs; B.x = B.c * cs; B.y = B.r * cs;
+  }
+
+  async function resolve() {
+    let chain = 0;
+    for (;;) {
+      const m = findMatches(); if (!m.size) break;
+      chain++;
+      const gems = [...m].map(i => grid[(i / N) | 0][i % N]);
+      const pts = gems.length * 10 * chain + (gems.length > 3 ? (gems.length - 3) * 20 : 0); score += pts; $('score').textContent = score;
+      Arcade.note(chain * 2 + 1, .25, 'triangle', .18); Arcade.note(chain * 2 + 4, .2, 'sine', .08); Arcade.pop(1 + chain * .08);
+      let cx = 0, cy = 0;
+      for (const g of gems) {
+        cx += g.x + cs / 2; cy += g.y + cs / 2;
+        for (let k = 0; k < 8; k++) { const a = Math.random() * 6.28, s = 60 + Math.random() * 200; parts.push({ x: g.x + cs / 2, y: g.y + cs / 2, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0, hue: HUE[g.t] }); }
+      }
+      texts.push({ x: cx / gems.length, y: cy / gems.length, s: '+' + pts, t: 0 });
+      if (chain >= 2) say(['', '', 'Nice!', 'Great!', 'Awesome!', 'INCREDIBLE!'][Math.min(chain, 5)] + ' x' + chain);
+      await tween(200, k => { for (const g of gems) { g.s = 1 - ease(k); g.a = 1 - k; } });
+      for (const g of gems) grid[g.r][g.c] = null;
+      // gravity
+      const moves = [];
+      for (let c = 0; c < N; c++) {
+        let empty = 0;
+        for (let r = N - 1; r >= 0; r--) { if (!grid[r][c]) empty++; else if (empty) { const g = grid[r][c]; grid[r + empty][c] = g; grid[r][c] = null; g.r = r + empty; moves.push(g); } }
+        for (let k = 0; k < empty; k++) { const g = gem(empty - 1 - k, c, rnd()); g.y = -(k + 1) * cs; grid[empty - 1 - k][c] = g; moves.push(g); }
+      }
+      const from = moves.map(g => g.y);
+      await tween(300, k => { const e = k * k * (3 - 2 * k); moves.forEach((g, i) => { g.y = from[i] + (g.r * cs - from[i]) * e; }); });
+      moves.forEach(g => { g.y = g.r * cs; });
+      Arcade.tone(180, .06, 'sine', .05, 120);
+    }
+    return chain;
+  }
+
+  function say(t) { const s = $('say'); s.textContent = t; s.classList.remove('bump'); void s.offsetWidth; s.classList.add('bump'); }
+
+  async function attempt(a, b) {
+    if (busy || state !== 'play') return; busy = true; sel = null;
+    await swap(a, b);
+    if (!findMatches().size) { Arcade.tone(200, .12, 'square', .08, 120); await swap(b, a); busy = false; return; }
+    moves--; $('moves').textContent = moves;
+    await resolve();
+    if (!hasMove()) { say('Shuffle!'); for (;;) { const flat = grid.flat(); for (let i = flat.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[flat[i].t, flat[j].t] = [flat[j].t, flat[i].t]; } if (!findMatches().size && hasMove()) break; } Arcade.chord([0, 3, 5], .3); }
+    busy = false;
+    if (moves <= 0) finish();
+  }
+
+  function finish() {
+    state = 'over';
+    const nb = Arcade.setBest('gems', score); $('best').textContent = Arcade.best('gems');
+    $('final').textContent = score; $('endmsg').innerHTML = nb && score ? '<span class="badge-new">NEW BEST!</span>' : 'Best: ' + Arcade.best('gems');
+    Arcade.chord(nb ? [4, 7, 9, 12] : [2, 4, 7], .6);
+    setTimeout(() => $('end').classList.add('show'), 500);
+  }
+
+  // input
+  const cell = e => { const r = cv.getBoundingClientRect(); return { r: Math.min(N - 1, Math.max(0, Math.floor((e.clientY - r.top) / cs))), c: Math.min(N - 1, Math.max(0, Math.floor((e.clientX - r.left) / cs))) }; };
+  let dragStart = null;
+  cv.addEventListener('pointerdown', e => {
+    if (busy || state !== 'play') return;
+    const p = cell(e); dragStart = { x: e.clientX, y: e.clientY, p };
+    if (sel && Math.abs(sel.r - p.r) + Math.abs(sel.c - p.c) === 1) { const a = sel; dragStart = null; attempt(a, p); }
+    else sel = p;
+    Arcade.note(2, .06, 'sine', .08);
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!dragStart || busy) return;
+    const dx = e.clientX - dragStart.x, dy = e.clientY - dragStart.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < cs * .35) return;
+    const p = dragStart.p; const q = Math.abs(dx) > Math.abs(dy) ? { r: p.r, c: p.c + (dx > 0 ? 1 : -1) } : { r: p.r + (dy > 0 ? 1 : -1), c: p.c };
+    dragStart = null;
+    if (q.r >= 0 && q.r < N && q.c >= 0 && q.c < N) attempt(p, q);
+  });
+  addEventListener('pointerup', () => { dragStart = null; });
+
+  // drawing
+  function drawGem(g) {
+    const cx = g.x + cs / 2, cy = g.y + cs / 2, r = cs * .38 * g.s, h = HUE[g.t];
+    if (r <= 0.5) return;
+    ctx.save(); ctx.globalAlpha = Math.max(0, g.a); ctx.translate(cx, cy);
+    const grad = ctx.createLinearGradient(0, -r, 0, r); grad.addColorStop(0, `hsl(${h} 95% 72%)`); grad.addColorStop(1, `hsl(${h} 85% 46%)`);
+    ctx.fillStyle = grad; ctx.shadowColor = `hsl(${h} 100% 60%)`; ctx.shadowBlur = 10; ctx.beginPath();
+    switch (g.t) {
+      case 0: for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3 - Math.PI / 2; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); } break;       // hexagon
+      case 1: ctx.arc(0, 0, r, 0, 6.2832); break;                                                                                                   // circle
+      case 2: ctx.moveTo(0, -r); ctx.lineTo(r, r * .8); ctx.lineTo(-r, r * .8); break;                                                              // triangle
+      case 3: ctx.moveTo(0, -r * 1.05); ctx.lineTo(r, 0); ctx.lineTo(0, r * 1.05); ctx.lineTo(-r, 0); break;                                        // diamond
+      case 4: ctx.roundRect ? ctx.roundRect(-r * .85, -r * .85, r * 1.7, r * 1.7, r * .3) : ctx.rect(-r * .85, -r * .85, r * 1.7, r * 1.7); break;  // rounded square
+      default: for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5 - Math.PI / 2, rr = i % 2 ? r * .5 : r * 1.05; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }       // star
+    }
+    ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(-r * .3, -r * .4, r * .22, r * .12, -.6, 0, 6.2832); ctx.fill();
+    ctx.restore();
+  }
+  function draw() {
+    ctx.clearRect(0, 0, size, size);
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) { if ((r + c) % 2) { ctx.fillStyle = 'rgba(255,255,255,.04)'; ctx.fillRect(c * cs, r * cs, cs, cs); } }
+    if (grid) for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (grid[r][c]) drawGem(grid[r][c]);
+    if (sel && !busy) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.setLineDash([6, 5]); ctx.strokeRect(sel.c * cs + 4, sel.r * cs + 4, cs - 8, cs - 8); ctx.setLineDash([]); }
+    for (const p of parts) { ctx.fillStyle = `hsla(${p.hue},95%,72%,${Math.max(0, 1 - p.t / .6)})`; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); }
+    ctx.textAlign = 'center'; ctx.font = '800 20px "Trebuchet MS", sans-serif';
+    for (const t of texts) { ctx.fillStyle = `rgba(255,255,255,${1 - t.t / .9})`; ctx.fillText(t.s, t.x, t.y - t.t * 40); }
+  }
+  let last = performance.now();
+  (function loop(now) {
+    const dt = Math.min((now - last) / 1000, .05); last = now;
+    for (const p of parts) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; }
+    parts = parts.filter(p => p.t < .6); for (const t of texts) t.t += dt; texts = texts.filter(t => t.t < .9);
+    draw(); requestAnimationFrame(loop);
+  })(last);
+
+  function begin() { score = 0; moves = MOVES; $('score').textContent = 0; $('moves').textContent = MOVES; parts = []; texts = []; sel = null; busy = false; fresh(); state = 'play'; $('start').classList.remove('show'); $('end').classList.remove('show'); Arcade.chord([0, 2, 4], .3); }
+  $('go').onclick = begin; $('again').onclick = begin;
+  fresh();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Chain Pop · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow: hidden; height: 100vh; user-select: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+  .bar { pointer-events: none; } .bar > * { pointer-events: auto; }
+  #banner {
+    position: fixed; left: 50%; top: 26%; transform: translateX(-50%); z-index: 4; pointer-events: none; text-align: center;
+    font-weight: 900; font-size: 34px; text-shadow: 0 4px 0 rgba(0,0,0,.3), 0 0 24px rgba(139,92,255,.9); opacity: 0;
+  }
+  #banner small { display: block; font-size: 16px; color: var(--muted); font-weight: 700; margin-top: 4px; }
+  #banner.show { animation: b 1.6s ease-out; }
+  @keyframes b { 0% { opacity: 0; transform: translateX(-50%) scale(.6); } 15% { opacity: 1; transform: translateX(-50%) scale(1.1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) translateY(-20px); } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>💥 Chain Pop</h1>
+  <div class="stat"><small>Level</small><b id="lvl">1</b></div>
+  <div class="stat"><small>Popped</small><b id="pp">0/0</b></div>
+  <div class="stat"><small>Score</small><b id="score">0</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div id="banner"></div>
+
+<div class="overlay show" id="start">
+  <div class="panel">
+    <h2>💥 Chain Pop</h2>
+    <p>You get <b>one tap</b> per level. Set off a blast and let it chain from dot to dot. Pop enough dots to advance!</p>
+    <button class="btn" id="go">Start</button>
+  </div>
+</div>
+<div class="overlay" id="end">
+  <div class="panel">
+    <h2>Not enough!</h2>
+    <p id="why"></p>
+    <div class="big" id="final">0</div>
+    <p id="endmsg"></p>
+    <button class="btn" id="again">Try again</button>
+  </div>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $('c'), ctx = cv.getContext('2d');
+  let W, H, dpr;
+  function resize() { dpr = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  addEventListener('resize', resize); resize();
+
+  const COLS = [[255,79,163],[56,225,255],[182,255,74],[255,210,63],[139,92,255],[255,140,66]];
+  let dots = [], blasts = [], parts = [], texts = [];
+  let level = 1, score = 0, popped = 0, target = 0, state = 'idle';   // idle | ready | running | between | over
+
+  const dotsFor = L => Math.min(10 + L * 4, 80);
+  const targetFor = L => { const n = dotsFor(L); return Math.min(n - 2, Math.max(2, Math.round(n * (0.12 + 0.035 * (L - 1))))); };
+  const blastR = () => Math.max(52, Math.min(W, H) * 0.1);
+
+  function setup() {
+    dots = []; blasts = []; parts = []; texts = []; popped = 0;
+    const n = dotsFor(level); target = targetFor(level);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * 6.28, s = 40 + Math.random() * 60 + level * 3;
+      dots.push({ x: 30 + Math.random() * (W - 60), y: 90 + Math.random() * (H - 120), vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: 9, col: COLS[i % COLS.length] });
+    }
+    state = 'ready'; hud();
+    banner(`Level ${level}`, `Pop ${target} of ${n} dots`);
+  }
+  function hud() { $('lvl').textContent = level; $('pp').textContent = popped + '/' + target; $('score').textContent = score; }
+  function banner(t, s) { const b = $('banner'); b.innerHTML = t + `<small>${s || ''}</small>`; b.classList.remove('show'); void b.offsetWidth; b.classList.add('show'); }
+
+  function addBlast(x, y, col, depth) {
+    blasts.push({ x, y, col, depth, r: 4, t: 0, max: blastR() });
+    for (let i = 0; i < 12; i++) { const a = Math.random() * 6.28, s = 60 + Math.random() * 180; parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 0, col }); }
+  }
+
+  cv.addEventListener('pointerdown', e => {
+    if (state !== 'ready') return;
+    state = 'running';
+    addBlast(e.clientX, e.clientY, [255, 255, 255], 0);
+    Arcade.note(0, .3, 'triangle', .2);
+  });
+
+  function update(dt) {
+    for (const d of dots) {
+      d.x += d.vx * dt; d.y += d.vy * dt;
+      if (d.x < d.r) { d.x = d.r; d.vx = Math.abs(d.vx); } if (d.x > W - d.r) { d.x = W - d.r; d.vx = -Math.abs(d.vx); }
+      if (d.y < 70 + d.r) { d.y = 70 + d.r; d.vy = Math.abs(d.vy); } if (d.y > H - d.r) { d.y = H - d.r; d.vy = -Math.abs(d.vy); }
+    }
+    for (const b of blasts) {
+      b.t += dt;
+      if (b.t < .25) b.r = 4 + (b.max - 4) * (b.t / .25);
+      else if (b.t < 1.35) b.r = b.max;
+      else b.r = Math.max(0, b.max * (1 - (b.t - 1.35) / .3));
+    }
+    // dots touching a blast become blasts
+    for (let i = dots.length - 1; i >= 0; i--) {
+      const d = dots[i];
+      for (const b of blasts) {
+        if (b.t > 1.35) continue;
+        if ((d.x - b.x) ** 2 + (d.y - b.y) ** 2 <= (b.r + d.r) ** 2) {
+          dots.splice(i, 1); popped++;
+          const depth = b.depth + 1, pts = 10 * depth; score += pts;
+          addBlast(d.x, d.y, d.col, depth);
+          texts.push({ x: d.x, y: d.y, s: '+' + pts, t: 0, col: d.col });
+          Arcade.note(Math.min(depth, 16), .25, 'triangle', .16); Arcade.pop(1 + Math.min(depth, 12) * .05);
+          hud(); break;
+        }
+      }
+    }
+    blasts = blasts.filter(b => b.t < 1.7);
+    for (const p of parts) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .97; p.vy *= .97; }
+    parts = parts.filter(p => p.t < .7);
+    for (const t of texts) t.t += dt; texts = texts.filter(t => t.t < .8);
+    if (state === 'running' && blasts.length === 0) resolve();
+  }
+
+  function resolve() {
+    if (popped >= target) {
+      state = 'between'; Arcade.chord([0, 2, 4, 7], .5);
+      const bonus = (popped - target) * 5; score += bonus;
+      banner('Cleared! 🎉', `${popped} popped${bonus ? ' · +' + bonus + ' bonus' : ''}`); hud();
+      Arcade.setBest('chain', level);
+      setTimeout(() => { level++; setup(); }, 1700);
+    } else {
+      state = 'over';
+      const nb = Arcade.setBest('chain', level - 1 > 0 ? level - 1 : 0);
+      $('why').textContent = `You popped ${popped} — needed ${target}.`;
+      $('final').textContent = score;
+      $('endmsg').innerHTML = `Reached level ${level}` + (nb && level > 1 ? ' <span class="badge-new">NEW BEST!</span>' : ' · Best level cleared: ' + Arcade.best('chain'));
+      Arcade.tone(260, .5, 'sawtooth', .1, 60);
+      setTimeout(() => $('end').classList.add('show'), 400);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    for (const d of dots) {
+      const [r, g, b] = d.col;
+      ctx.save(); ctx.shadowColor = `rgb(${r},${g},${b})`; ctx.shadowBlur = 14; ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, 6.2832); ctx.fill(); ctx.restore();
+      ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.beginPath(); ctx.arc(d.x - 3, d.y - 3, 2.5, 0, 6.2832); ctx.fill();
+    }
+    for (const b of blasts) {
+      const [r, g, bl] = b.col; const fade = b.t > 1.35 ? 1 : 0.55;
+      const grad = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, Math.max(b.r, 1));
+      grad.addColorStop(0, `rgba(255,255,255,${fade})`); grad.addColorStop(.6, `rgba(${r},${g},${bl},${fade * .7})`); grad.addColorStop(1, `rgba(${r},${g},${bl},${fade * .25})`);
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.2832); ctx.fill();
+      ctx.strokeStyle = `rgba(${r},${g},${bl},.95)`; ctx.lineWidth = 2.5; ctx.stroke();
+    }
+    for (const p of parts) { ctx.fillStyle = `rgba(${p.col[0]},${p.col[1]},${p.col[2]},${1 - p.t / .7})`; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); }
+    ctx.textAlign = 'center'; ctx.font = '800 20px "Trebuchet MS", sans-serif';
+    for (const t of texts) { ctx.fillStyle = `rgba(255,255,255,${1 - t.t / .8})`; ctx.fillText(t.s, t.x, t.y - 14 - t.t * 40); }
+    if (state === 'ready') { // aiming ring under cursor hint
+      ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.setLineDash([6, 8]); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(mx, my, blastR(), 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  let mx = -999, my = -999;
+  cv.addEventListener('pointermove', e => { mx = e.clientX; my = e.clientY; });
+
+  let last = performance.now();
+  (function loop(now) { const dt = Math.min((now - last) / 1000, .05); last = now; if (dots.length || blasts.length || parts.length) update(dt); draw(); requestAnimationFrame(loop); })(last);
+
+  function begin() { level = 1; score = 0; $('start').classList.remove('show'); $('end').classList.remove('show'); setup(); }
+  $('go').onclick = begin;
+  $('again').onclick = () => { $('end').classList.remove('show'); setup(); };
+  // idle demo dots behind the start panel
+  for (let i = 0; i < 24; i++) { const a = Math.random() * 6.28; dots.push({ x: Math.random() * W, y: 90 + Math.random() * (H - 100), vx: Math.cos(a) * 60, vy: Math.sin(a) * 60, r: 9, col: COLS[i % COLS.length] }); }
+})();
+</script>
+</body>
+</html>

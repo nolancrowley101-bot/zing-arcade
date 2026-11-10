@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Bubble Pop · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow: hidden; height: 100vh; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; }
+  .bar { pointer-events: none; } .bar > * { pointer-events: auto; }
+  #combo {
+    position: fixed; left: 50%; top: 84px; transform: translateX(-50%); font-size: 40px; font-weight: 900;
+    color: var(--yellow); text-shadow: 0 4px 0 rgba(0,0,0,.3), 0 0 24px rgba(255,210,63,.6); pointer-events: none;
+    opacity: 0; z-index: 4; white-space: nowrap;
+  }
+  #combo.bump { animation: bump .25s cubic-bezier(.2,1.6,.4,1); opacity: 1; }
+  @keyframes bump { from { transform: translateX(-50%) scale(1.6); } to { transform: translateX(-50%) scale(1); } }
+  #timebar { position: fixed; left: 0; top: 0; height: 5px; background: linear-gradient(90deg, var(--lime), var(--cyan)); z-index: 6; width: 100%; transform-origin: left; }
+</style>
+</head>
+<body>
+<div id="timebar"></div>
+<canvas id="c" class="stage"></canvas>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>🫧 Bubble Pop</h1>
+  <div class="stat"><small>Score</small><b id="score">0</b></div>
+  <div class="stat"><small>Time</small><b id="time">45</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div id="combo"></div>
+
+<div class="overlay show" id="start">
+  <div class="panel">
+    <h2>🫧 Bubble Pop</h2>
+    <p>Click, tap or <b>drag</b> across bubbles to pop them.<br>Pop fast to build a combo. Small bubbles are worth more!</p>
+    <button class="btn" id="go">Start</button>
+  </div>
+</div>
+<div class="overlay" id="end">
+  <div class="panel">
+    <h2>Time’s up!</h2>
+    <div class="big" id="final">0</div>
+    <p id="endmsg"></p>
+    <p>Pops: <b id="pops">0</b> · Best combo: <b id="bc">0</b></p>
+    <button class="btn" id="again">Play again</button>
+  </div>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const DURATION = 45;
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  let W, H, dpr;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener('resize', resize); resize();
+
+  const COLORS = [[255,79,163],[56,225,255],[182,255,74],[255,210,63],[139,92,255],[255,140,66]];
+  let bubbles = [], parts = [], texts = [], rings = [];
+  let state = 'idle', score = 0, pops = 0, combo = 0, bestCombo = 0, lastPop = 0, timeLeft = DURATION, spawnT = 0;
+  const $ = id => document.getElementById(id);
+
+  function spawn(initial) {
+    const r = 18 + Math.pow(Math.random(), 1.6) * 52;
+    bubbles.push({
+      x: r + Math.random() * (W - 2 * r),
+      y: initial ? Math.random() * H : H + r + 10,
+      r, vy: -(30 + Math.random() * 60) * (1.3 - r / 90), ph: Math.random() * 6.28, wob: 8 + Math.random() * 18,
+      col: COLORS[(Math.random() * COLORS.length) | 0], squish: 0, birth: 0
+    });
+  }
+
+  function popAt(b, i) {
+    const now = performance.now();
+    combo = now - lastPop < 900 ? combo + 1 : 1;
+    lastPop = now; bestCombo = Math.max(bestCombo, combo);
+    const pts = Math.round((80 - b.r) / 8 + 1) * Math.min(combo, 10);
+    score += pts; pops++;
+    const [r, g, bl] = b.col;
+    for (let k = 0; k < 14; k++) {
+      const a = Math.random() * 6.28, s = 80 + Math.random() * 260;
+      parts.push({ x: b.x, y: b.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5 + Math.random() * 0.4, t: 0, r: 2 + Math.random() * 4, col: b.col });
+    }
+    rings.push({ x: b.x, y: b.y, r: b.r, t: 0, col: b.col });
+    texts.push({ x: b.x, y: b.y, t: 0, s: '+' + pts, col: b.col });
+    Arcade.note(Math.min(combo - 1, 14) + 2, 0.22, 'triangle', 0.18);
+    Arcade.pop(1 + Math.min(combo, 12) * 0.05);
+    bubbles.splice(i, 1);
+    $('score').textContent = score;
+    const cb = $('combo');
+    if (combo >= 3) {
+      cb.textContent = combo + 'x COMBO!';
+      cb.classList.remove('bump'); void cb.offsetWidth; cb.classList.add('bump');
+    }
+  }
+
+  function hit(x, y) {
+    if (state !== 'play') return;
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      const b = bubbles[i];
+      if ((x - b.x) ** 2 + (y - b.y) ** 2 <= (b.r + 6) ** 2) { popAt(b, i); return; }
+    }
+    // missed
+    if (performance.now() - lastPop > 250) combo = 0;
+  }
+  let down = false;
+  cv.addEventListener('pointerdown', e => { down = true; hit(e.clientX, e.clientY); });
+  cv.addEventListener('pointermove', e => { if (down) hit(e.clientX, e.clientY); });
+  addEventListener('pointerup', () => down = false);
+
+  function start() {
+    bubbles = []; parts = []; texts = []; rings = [];
+    score = pops = combo = bestCombo = 0; timeLeft = DURATION;
+    $('score').textContent = 0; $('time').textContent = DURATION; $('combo').style.opacity = 0;
+    for (let i = 0; i < 22; i++) spawn(true);
+    state = 'play';
+    $('start').classList.remove('show'); $('end').classList.remove('show');
+    Arcade.chord([0, 2, 4], 0.4);
+  }
+  function finish() {
+    state = 'over';
+    const nb = Arcade.setBest('bubbles', score);
+    $('final').textContent = score; $('pops').textContent = pops; $('bc').textContent = bestCombo;
+    $('endmsg').innerHTML = nb ? '<span class="badge-new">NEW BEST!</span>' : 'Best: ' + Arcade.best('bubbles');
+    $('end').classList.add('show');
+    Arcade.chord(nb ? [4, 7, 9, 12] : [2, 4, 7], 0.6);
+  }
+  $('go').onclick = start; $('again').onclick = start;
+
+  function draw(dt) {
+    ctx.clearRect(0, 0, W, H);
+    for (const b of bubbles) {
+      const [r, g, bl] = b.col;
+      const x = b.x;
+      const grad = ctx.createRadialGradient(x - b.r * .35, b.y - b.r * .4, b.r * .1, x, b.y, b.r);
+      grad.addColorStop(0, `rgba(255,255,255,.85)`);
+      grad.addColorStop(.25, `rgba(${r},${g},${bl},.55)`);
+      grad.addColorStop(1, `rgba(${r},${g},${bl},.22)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(x, b.y, b.r, 0, 6.2832); ctx.fill();
+      ctx.strokeStyle = `rgba(${r},${g},${bl},.9)`; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.7)';
+      ctx.beginPath(); ctx.ellipse(x - b.r * .38, b.y - b.r * .42, b.r * .18, b.r * .1, -.7, 0, 6.2832); ctx.fill();
+    }
+    for (const p of rings) {
+      const k = p.t / 0.35; if (k >= 1) continue;
+      ctx.strokeStyle = `rgba(${p.col[0]},${p.col[1]},${p.col[2]},${1 - k})`; ctx.lineWidth = 4 * (1 - k);
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (1 + k * .7), 0, 6.2832); ctx.stroke();
+    }
+    for (const p of parts) {
+      ctx.fillStyle = `rgba(${p.col[0]},${p.col[1]},${p.col[2]},${1 - p.t / p.life})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (1 - p.t / p.life * .5), 0, 6.2832); ctx.fill();
+    }
+    ctx.textAlign = 'center'; ctx.font = '800 22px "Trebuchet MS", sans-serif';
+    for (const t of texts) {
+      const k = t.t / 0.8;
+      ctx.fillStyle = `rgba(255,255,255,${1 - k})`;
+      ctx.fillText(t.s, t.x, t.y - 20 - k * 50);
+    }
+  }
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min((now - last) / 1000, 0.05); last = now;
+    if (state === 'play') {
+      timeLeft -= dt;
+      spawnT -= dt;
+      if (spawnT <= 0) { spawn(false); spawnT = 0.12 + Math.random() * 0.18; }
+      $('time').textContent = Math.max(0, Math.ceil(timeLeft));
+      $('timebar').style.transform = `scaleX(${Math.max(0, timeLeft / DURATION)})`;
+      if (timeLeft <= 0) finish();
+    }
+    for (const b of bubbles) { b.y += b.vy * dt; b.ph += dt * 2; b.x += Math.sin(b.ph) * b.wob * dt * 0.3; }
+    bubbles = bubbles.filter(b => b.y > -b.r - 20);
+    if (state === 'idle' || state === 'over') while (bubbles.length < 14) spawn(true);
+    for (const p of parts) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; p.vx *= 0.98; }
+    parts = parts.filter(p => p.t < p.life);
+    for (const r of rings) r.t += dt; rings = rings.filter(r => r.t < 0.35);
+    for (const t of texts) t.t += dt; texts = texts.filter(t => t.t < 0.8);
+    draw(dt);
+    requestAnimationFrame(loop);
+  }
+  for (let i = 0; i < 14; i++) spawn(true);
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

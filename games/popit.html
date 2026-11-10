@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Pop It · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow-x: hidden; user-select: none; }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 4px 16px 40px; text-align: center; }
+  .help { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
+  #board {
+    --cols: 5;
+    display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: clamp(8px, 2.4vw, 14px);
+    padding: clamp(14px, 4vw, 24px); border-radius: 32px;
+    background: linear-gradient(160deg, #3a2a8a, #24195e); border: 2px solid rgba(255,255,255,.14);
+    box-shadow: 0 24px 60px rgba(0,0,0,.4), inset 0 2px 0 rgba(255,255,255,.12);
+    perspective: 900px; touch-action: none;
+    transition: transform .6s cubic-bezier(.3,1.4,.5,1);
+  }
+  #board.flip { transform: rotateY(180deg); }
+  .b {
+    aspect-ratio: 1; border-radius: 50%; border: 0; padding: 0; position: relative; cursor: pointer;
+    background: radial-gradient(circle at 34% 28%, rgba(255,255,255,.85) 0 7%, var(--hi) 22%, var(--c) 62%, var(--lo) 100%);
+    box-shadow: 0 7px 0 var(--lo), 0 10px 14px rgba(0,0,0,.35);
+    transition: transform .09s cubic-bezier(.3,1.6,.5,1), box-shadow .09s, filter .15s;
+  }
+  .b:hover:not(.in) { filter: brightness(1.12); }
+  .b.in {
+    transform: translateY(6px) scale(.94);
+    background: radial-gradient(circle at 60% 70%, rgba(255,255,255,.25) 0 6%, var(--lo) 30%, var(--c) 100%);
+    box-shadow: inset 0 6px 10px rgba(0,0,0,.45), 0 1px 0 rgba(255,255,255,.25);
+  }
+  .b.squish { animation: sq .22s ease-out; }
+  @keyframes sq { 0% { transform: translateY(0) scale(1.08, .86); } 100% { transform: translateY(6px) scale(.94); } }
+  .counter { font-size: 15px; color: var(--muted); margin-top: 18px; }
+  .counter b { color: var(--yellow); font-size: 20px; }
+  .row { display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+  .btn.small { margin: 0; padding: 8px 20px; font-size: 14px; }
+  .done { animation: wave 0.9s ease-in-out; }
+  @keyframes wave { 40% { filter: brightness(1.5) saturate(1.4); } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>🎈 Pop It</h1>
+  <div class="stat"><small>Pops</small><b id="pops">0</b></div>
+  <div class="stat"><small>Boards</small><b id="boards">0</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div class="wrap">
+  <p class="help">Press the bubbles (or drag across them). Clear the board to flip it and go again.</p>
+  <div id="board"></div>
+  <div class="counter">Lifetime pops: <b id="life">0</b></div>
+  <div class="row">
+    <button class="btn small" id="flip">Flip board</button>
+    <button class="btn small" id="size" style="background:linear-gradient(135deg,var(--yellow),var(--pink))">Change size</button>
+  </div>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const board = $('board');
+  const SIZES = [{ c: 4, r: 5 }, { c: 5, r: 6 }, { c: 6, r: 8 }];
+  const HUES = [[255,79,163],[255,140,66],[255,210,63],[110,220,90],[56,225,255],[139,92,255]];
+  let size = 1, left = 0, pops = 0, boards = 0, life = Arcade.best('popit'), flipping = false, streak = 0, lastPop = 0;
+  $('life').textContent = life;
+
+  const shade = ([r, g, b], k) => `rgb(${Math.max(0, Math.min(255, r * k)) | 0},${Math.max(0, Math.min(255, g * k)) | 0},${Math.max(0, Math.min(255, b * k)) | 0})`;
+
+  function build() {
+    const { c, r } = SIZES[size];
+    board.innerHTML = ''; board.style.setProperty('--cols', c);
+    left = c * r;
+    for (let i = 0; i < r; i++) for (let j = 0; j < c; j++) {
+      const col = HUES[(i + j) % HUES.length];
+      const b = document.createElement('button');
+      b.className = 'b'; b.dataset.i = i; b.dataset.j = j; b.setAttribute('aria-label', 'bubble');
+      b.style.setProperty('--c', shade(col, 1)); b.style.setProperty('--hi', shade(col, 1.25));
+      b.style.setProperty('--lo', shade(col, .62));
+      board.appendChild(b);
+    }
+  }
+
+  function press(b) {
+    if (!b || !b.classList.contains('b') || b.classList.contains('in') || flipping) return;
+    b.classList.add('in', 'squish');
+    const now = performance.now(); streak = now - lastPop < 350 ? streak + 1 : 0; lastPop = now;
+    const p = 0.8 + (+b.dataset.i * 0.04) + (+b.dataset.j * 0.07) + Math.random() * .05;
+    Arcade.pop(p);
+    if (streak > 3) Arcade.note(streak % 15, .15, 'sine', .06);
+    if (navigator.vibrate) navigator.vibrate(8);
+    pops++; life++; left--;
+    $('pops').textContent = pops; $('life').textContent = life;
+    try { localStorage.setItem('zing:best:popit', String(life)); } catch (e) {}
+    if (left === 0) cleared();
+  }
+
+  function cleared() {
+    boards++; $('boards').textContent = boards;
+    board.classList.add('done');
+    Arcade.chord([0, 2, 4, 7, 9, 12], .5);
+    setTimeout(() => board.classList.remove('done'), 900);
+    setTimeout(flip, 750);
+  }
+
+  function flip() {
+    if (flipping) return; flipping = true;
+    board.classList.add('flip');
+    Arcade.tone(200, .35, 'sine', .1, 700);
+    setTimeout(() => { build(); }, 300);                        // swap while edge-on
+    setTimeout(() => { board.classList.remove('flip'); flipping = false; }, 650);
+  }
+
+  board.addEventListener('pointerdown', e => press(e.target.closest('.b')));
+  board.addEventListener('pointermove', e => {
+    if (e.buttons || e.pressure > 0) {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      press(el && el.closest && el.closest('.b'));
+    }
+  });
+  $('flip').onclick = flip;
+  $('size').onclick = () => { size = (size + 1) % SIZES.length; build(); Arcade.pop(1.4); };
+  board.addEventListener('contextmenu', e => e.preventDefault());
+
+  build();
+})();
+</script>
+</body>
+</html>

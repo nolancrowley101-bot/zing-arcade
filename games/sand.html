@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Sand Garden · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow: hidden; height: 100vh; user-select: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; cursor: crosshair; background: #0e0b1f; }
+  .bar { pointer-events: none; } .bar > * { pointer-events: auto; }
+  .tools {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 5; display: flex; gap: 8px; align-items: center;
+    padding: 8px 12px; border-radius: 999px; background: rgba(20,14,50,.82); border: 1px solid var(--line); backdrop-filter: blur(8px);
+    flex-wrap: wrap; justify-content: center; max-width: 96vw;
+  }
+  .tool { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-weight: 700; font-size: 14px; }
+  .tool.on { background: linear-gradient(135deg, var(--lime), var(--cyan)); color: #1a0b3a; border-color: transparent; }
+  .sw { width: 28px; height: 28px; border-radius: 50%; border: 3px solid transparent; padding: 0; }
+  .sw.on { border-color: #fff; transform: scale(1.15); }
+  .hint { position: fixed; top: 70px; left: 0; right: 0; text-align: center; color: var(--muted); pointer-events: none; transition: opacity .6s; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>⏳ Sand Garden</h1>
+  <div class="stat"><small>Grains</small><b id="grains">0</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div class="hint" id="hint">Press and drag to pour sand ✨</div>
+<div class="tools" id="tools">
+  <button class="tool on" data-t="sand">Sand</button>
+  <button class="tool" data-t="rain">Rainbow</button>
+  <button class="tool" data-t="stone">Stone</button>
+  <button class="tool" data-t="erase">Erase</button>
+  <span id="sws"></span>
+  <button class="tool" id="clear">Clear</button>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $('c'), ctx = cv.getContext('2d');
+  const SCALE = 4;
+  let cols, rows, g, img, u32, off, octx, total = Arcade.best('sand');
+  // cell values: 0 empty, 1 stone, 2..362 sand with hue (v-2)
+  const pal = new Uint32Array(363);
+  const hsl = (h, s, l) => { s /= 100; l /= 100; const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return [f(0) * 255 | 0, f(8) * 255 | 0, f(4) * 255 | 0]; };
+  for (let h = 0; h < 361; h++) { const [r, gg, b] = hsl(h, 85, 62); pal[h + 2] = (255 << 24) | (b << 16) | (gg << 8) | r; }
+  pal[1] = (255 << 24) | (150 << 16) | (130 << 8) | 130;
+
+  function resize() {
+    const w = innerWidth, h = innerHeight;
+    cols = Math.ceil(w / SCALE); rows = Math.ceil(h / SCALE);
+    const old = g, oc = cols, or = rows;
+    cv.width = cols; cv.height = rows;
+    g = new Uint16Array(cols * rows);
+    off = document.createElement('canvas'); off.width = cols; off.height = rows; octx = off.getContext('2d');
+    img = octx.createImageData(cols, rows); u32 = new Uint32Array(img.data.buffer);
+    ctx.imageSmoothingEnabled = false;
+  }
+  resize(); addEventListener('resize', resize);
+
+  let tool = 'sand', hue = 330, rainbow = false, down = false, px = 0, py = 0, hueT = 0, unsaved = 0;
+  const SW = [330, 190, 90, 50, 270, 20];
+  SW.forEach((h, i) => {
+    const b = document.createElement('button'); b.className = 'sw' + (i === 0 ? ' on' : ''); b.style.background = `hsl(${h} 85% 62%)`;
+    b.setAttribute('aria-label', 'color ' + (i + 1));
+    b.onclick = () => { hue = h; tool = 'sand'; rainbow = false; sync(); document.querySelectorAll('.sw').forEach(x => x.classList.toggle('on', x === b)); };
+    $('sws').appendChild(b);
+  });
+  function sync() { document.querySelectorAll('.tool[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === (rainbow ? 'rain' : tool))); }
+  document.querySelectorAll('.tool[data-t]').forEach(b => b.onclick = () => {
+    const t = b.dataset.t; rainbow = t === 'rain'; tool = rainbow ? 'sand' : t; sync();
+    if (t !== 'sand') document.querySelectorAll('.sw').forEach(x => x.classList.remove('on'));
+  });
+  $('clear').onclick = () => { g.fill(0); Arcade.tone(500, .4, 'sine', .08, 80); };
+
+  function brush(cx, cy) {
+    const R = tool === 'sand' ? 4 : 5;
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      if (dx * dx + dy * dy > R * R) continue;
+      const x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
+      const i = y * cols + x;
+      if (tool === 'erase') g[i] = 0;
+      else if (tool === 'stone') g[i] = 1;
+      else if (!g[i] && Math.random() < .45) { g[i] = 2 + ((rainbow ? hueT : hue) % 360 | 0); total++; unsaved++; }
+    }
+  }
+  const pos = e => [Math.floor(e.clientX / SCALE), Math.floor(e.clientY / SCALE)];
+  cv.addEventListener('pointerdown', e => { down = true;[px, py] = pos(e); $('hint').style.opacity = 0; ac(); });
+  cv.addEventListener('pointermove', e => { [px, py] = pos(e); });
+  addEventListener('pointerup', () => down = false);
+  const ac = () => Arcade.tone(1, .01, 'sine', 0.0001);   // wake audio on first touch
+
+  let flip = 0, lastSound = 0;
+  function step() {
+    flip ^= 1;
+    for (let y = rows - 2; y >= 0; y--) {
+      const base = y * cols;
+      for (let k = 0; k < cols; k++) {
+        const x = flip ? k : cols - 1 - k, i = base + x, v = g[i];
+        if (v < 2) continue;
+        const b = i + cols;
+        if (!g[b]) { g[b] = v; g[i] = 0; continue; }
+        const d = Math.random() < .5 ? -1 : 1;
+        const x1 = x + d, x2 = x - d;
+        if (x1 >= 0 && x1 < cols && !g[b + d] && !g[i + d]) { g[b + d] = v; g[i] = 0; }
+        else if (x2 >= 0 && x2 < cols && !g[b - d] && !g[i - d]) { g[b - d] = v; g[i] = 0; }
+      }
+    }
+  }
+
+  let last = performance.now();
+  (function loop(now) {
+    const dt = Math.min((now - last) / 1000, .05); last = now;
+    hueT = (hueT + dt * 90) % 360;
+    if (down) {
+      brush(px, py);
+      if (tool === 'sand' && now - lastSound > 70) { lastSound = now; Arcade.tone(900 + Math.random() * 500, .05, 'sine', .018, 400); }
+    }
+    step(); step();
+    for (let i = 0; i < g.length; i++) u32[i] = g[i] ? pal[g[i]] : 0;
+    octx.putImageData(img, 0, 0);
+    ctx.clearRect(0, 0, cols, rows); ctx.drawImage(off, 0, 0);
+    $('grains').textContent = Arcade.fmt(total);
+    if (unsaved > 300) { unsaved = 0; Arcade.setBest('sand', total); }
+    requestAnimationFrame(loop);
+  })(last);
+  addEventListener('beforeunload', () => Arcade.setBest('sand', total));
+})();
+</script>
+</body>
+</html>

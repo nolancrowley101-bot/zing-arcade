@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Orb Factory · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow-x: hidden; user-select: none; }
+  .layout { max-width: 920px; margin: 0 auto; padding: 4px 16px 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } }
+  .left { text-align: center; position: relative; }
+  .count { font-size: clamp(38px, 9vw, 64px); font-weight: 900; margin: 10px 0 0; font-variant-numeric: tabular-nums; }
+  .rate { color: var(--muted); margin: 0 0 8px; }
+  .orbwrap { position: relative; width: min(300px, 70vw); aspect-ratio: 1; margin: 12px auto; }
+  #orb {
+    width: 100%; height: 100%; border-radius: 50%; border: 0; position: relative;
+    background: radial-gradient(circle at 32% 28%, #fff 0 6%, #d6ffa0 14%, var(--lime) 40%, #3ea64b 78%, #1e6b36 100%);
+    box-shadow: 0 0 60px rgba(182,255,74,.55), inset -14px -18px 40px rgba(0,60,20,.45);
+    transition: transform .07s; animation: idle 3s ease-in-out infinite;
+  }
+  #orb:active, #orb.hit { transform: scale(.9); }
+  @keyframes idle { 50% { transform: scale(1.03); box-shadow: 0 0 90px rgba(182,255,74,.75), inset -14px -18px 40px rgba(0,60,20,.45); } }
+  .float { position: absolute; font-weight: 900; font-size: 22px; color: #fff; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.5); animation: up .9s ease-out forwards; z-index: 5; }
+  @keyframes up { to { transform: translateY(-90px); opacity: 0; } }
+  .ripple { position: absolute; border-radius: 50%; border: 3px solid rgba(182,255,74,.8); pointer-events: none; animation: rip .6s ease-out forwards; }
+  @keyframes rip { from { transform: scale(.6); opacity: 1; } to { transform: scale(1.6); opacity: 0; } }
+  .shop h2 { margin: 6px 0 12px; font-size: 18px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .item {
+    width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; margin-bottom: 10px;
+    padding: 10px 14px; border-radius: 16px; border: 1px solid var(--line); background: var(--card);
+    transition: transform .08s, background .15s, opacity .15s;
+  }
+  .item:not(:disabled):hover { background: rgba(255,255,255,.12); }
+  .item:not(:disabled):active { transform: scale(.97); }
+  .item:disabled { opacity: .45; cursor: not-allowed; }
+  .item.afford { border-color: var(--lime); box-shadow: 0 0 18px -6px var(--lime); }
+  .item .ic { font-size: 28px; width: 38px; text-align: center; }
+  .item .nm { font-weight: 800; }
+  .item small { display: block; color: var(--muted); }
+  .item .cost { margin-left: auto; text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .item .own { font-size: 22px; font-weight: 900; color: var(--yellow); min-width: 30px; text-align: right; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>🔮 Orb Factory</h1>
+  <button class="icon-btn" id="mute"></button>
+</div>
+
+<div class="layout">
+  <section class="left">
+    <div class="count" id="count">0</div>
+    <div class="rate" id="rate">0 orbs / second</div>
+    <div class="orbwrap" id="orbwrap"><button id="orb" aria-label="Tap the orb"></button></div>
+    <p class="rate" id="click">+1 per tap</p>
+    <button class="btn" id="reset" style="background:#2a2250;color:var(--muted);font-size:12px;padding:6px 14px;box-shadow:none">Reset progress</button>
+  </section>
+  <section class="shop">
+    <h2>Upgrades &amp; machines</h2>
+    <div id="shop"></div>
+  </section>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const KEY = 'zing:factory:save';
+  const GENS = [
+    { id: 'spark',   ic: '✨', name: 'Spark',   base: 15,      rate: 0.5 },
+    { id: 'drone',   ic: '🤖', name: 'Drone',   base: 120,     rate: 4 },
+    { id: 'forge',   ic: '🏭', name: 'Forge',   base: 1400,    rate: 28 },
+    { id: 'reactor', ic: '☢️', name: 'Reactor', base: 16000,   rate: 190 },
+    { id: 'portal',  ic: '🌀', name: 'Portal',  base: 210000,  rate: 1400 },
+    { id: 'star',    ic: '🌟', name: 'Star',    base: 3.2e6,   rate: 11000 },
+    { id: 'galaxy',  ic: '🌌', name: 'Galaxy',  base: 5e7,     rate: 90000 },
+  ];
+  let S = { orbs: 0, total: 0, own: {}, tap: 1, tapLvl: 0, mult: 1, t: Date.now() };
+  try { const s = JSON.parse(localStorage.getItem(KEY)); if (s) S = Object.assign(S, s); } catch (e) {}
+
+  const gcost = g => Math.ceil(g.base * Math.pow(1.15, S.own[g.id] || 0));
+  const tapCost = () => Math.ceil(50 * Math.pow(2.6, S.tapLvl));
+  const multCost = () => Math.ceil(5000 * Math.pow(6, Math.round(Math.log2(S.mult))));
+  const cps = () => GENS.reduce((a, g) => a + (S.own[g.id] || 0) * g.rate, 0) * S.mult;
+
+  // offline progress (capped at 8h)
+  const away = Math.min((Date.now() - S.t) / 1000, 8 * 3600);
+  if (away > 30 && cps() > 0) {
+    const gain = cps() * away; S.orbs += gain; S.total += gain;
+    setTimeout(() => toast(`Welcome back! Your factory made ${Arcade.fmt(gain)} orbs while you were away.`), 400);
+  }
+
+  function toast(msg) {
+    const d = document.createElement('div');
+    d.textContent = msg;
+    d.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#2a1f66;border:1px solid var(--lime);padding:10px 18px;border-radius:14px;z-index:30;max-width:90vw;text-align:center;font-weight:700';
+    document.body.appendChild(d); setTimeout(() => d.remove(), 4500);
+  }
+
+  // ---- shop ----
+  const rows = [];
+  function item(ic, name, desc, costFn, buy, ownFn) {
+    const b = document.createElement('button'); b.className = 'item';
+    b.innerHTML = `<span class="ic">${ic}</span><span><span class="nm">${name}</span><small>${desc}</small></span><span class="cost"></span><span class="own"></span>`;
+    b.onclick = () => { const c = costFn(); if (S.orbs >= c) { S.orbs -= c; buy(); Arcade.note(5 + Math.min(ownFn(), 9), .25, 'triangle', .18); Arcade.note(10, .1, 'sine', .08); render(true); } };
+    $('shop').appendChild(b);
+    rows.push({ b, costFn, ownFn, cost: b.querySelector('.cost'), own: b.querySelector('.own') });
+  }
+  item('👆', 'Stronger Touch', 'Double your tap power', tapCost, () => { S.tapLvl++; S.tap *= 2; }, () => S.tapLvl);
+  GENS.forEach(g => item(g.ic, g.name, `+${Arcade.fmt(g.rate)} orbs/sec`, () => gcost(g), () => { S.own[g.id] = (S.own[g.id] || 0) + 1; }, () => S.own[g.id] || 0));
+  item('⚡', 'Overclock', 'x2 ALL production', multCost, () => { S.mult *= 2; }, () => Math.round(Math.log2(S.mult)));
+
+  function render(force) {
+    $('count').textContent = Arcade.fmt(S.orbs);
+    $('rate').textContent = Arcade.fmt(cps()) + ' orbs / second';
+    $('click').textContent = '+' + Arcade.fmt(S.tap) + ' per tap';
+    for (const r of rows) {
+      const c = r.costFn(), ok = S.orbs >= c;
+      r.cost.textContent = '🔮 ' + Arcade.fmt(c);
+      r.own.textContent = r.ownFn() || '';
+      r.b.disabled = !ok; r.b.classList.toggle('afford', ok);
+    }
+  }
+
+  // ---- tapping ----
+  const orb = $('orb'), wrap = $('orbwrap');
+  let combo = 0, lastTap = 0;
+  orb.addEventListener('pointerdown', e => {
+    S.orbs += S.tap; S.total += S.tap;
+    const now = performance.now(); combo = now - lastTap < 400 ? combo + 1 : 0; lastTap = now;
+    Arcade.pop(1 + Math.min(combo, 10) * .06);
+    const rect = wrap.getBoundingClientRect();
+    const f = document.createElement('div'); f.className = 'float'; f.textContent = '+' + Arcade.fmt(S.tap);
+    f.style.left = (e.clientX - rect.left - 14 + (Math.random() - .5) * 40) + 'px'; f.style.top = (e.clientY - rect.top - 20) + 'px';
+    wrap.appendChild(f); setTimeout(() => f.remove(), 900);
+    const rp = document.createElement('div'); rp.className = 'ripple';
+    rp.style.cssText = `inset:0;`; wrap.appendChild(rp); setTimeout(() => rp.remove(), 600);
+    orb.classList.add('hit'); setTimeout(() => orb.classList.remove('hit'), 70);
+    render();
+  });
+
+  // ---- loop + save ----
+  let last = performance.now(), sinceSave = 0, sinceRender = 0;
+  (function loop(now) {
+    const dt = (now - last) / 1000; last = now;
+    const g = cps() * dt; S.orbs += g; S.total += g;
+    sinceRender += dt; sinceSave += dt;
+    if (sinceRender > .1) { render(); sinceRender = 0; }
+    if (sinceSave > 3) save();
+    requestAnimationFrame(loop);
+  })(last);
+  function save() { sinceSave = 0; S.t = Date.now(); try { localStorage.setItem(KEY, JSON.stringify(S)); localStorage.setItem('zing:best:factory', String(Math.floor(S.total))); } catch (e) {} }
+  addEventListener('beforeunload', save);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
+
+  $('reset').onclick = () => { if (confirm('Reset all progress?')) { try { localStorage.removeItem(KEY); } catch (e) {} S = { orbs: 0, total: 0, own: {}, tap: 1, tapLvl: 0, mult: 1, t: Date.now() }; render(); } };
+  render();
+})();
+</script>
+</body>
+</html>

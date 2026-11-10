@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Merge · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow-x: hidden; user-select: none; touch-action: none; }
+  .wrap { max-width: 460px; margin: 6px auto 0; padding: 0 16px; }
+  .help { text-align: center; color: var(--muted); margin: 0 0 14px; font-size: 14px; }
+  #board {
+    position: relative; width: 100%; aspect-ratio: 1; background: rgba(255,255,255,.07);
+    border-radius: 20px; border: 1px solid var(--line); padding: 0; touch-action: none;
+  }
+  .cell { position: absolute; width: 25%; height: 25%; }
+  .cell::after, .tile i { content: ""; position: absolute; inset: 5px; border-radius: 14px; }
+  .cell::after { background: rgba(255,255,255,.07); }
+  .tile { position: absolute; width: 25%; height: 25%; transition: transform .12s ease-out; z-index: 2; }
+  .tile i {
+    display: flex; align-items: center; justify-content: center; font-style: normal; font-weight: 900;
+    font-size: clamp(22px, 7vw, 36px); color: #1a0b3a; box-shadow: 0 5px 0 rgba(0,0,0,.25);
+    animation: appear .18s ease-out;
+  }
+  .tile.merged i { animation: pulse .2s ease-out; }
+  .tile.big i { font-size: clamp(18px, 5.5vw, 28px); }
+  .tile.huge i { font-size: clamp(14px, 4.4vw, 22px); }
+  @keyframes appear { from { transform: scale(.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.28); } 100% { transform: scale(1); } }
+  .row { display: flex; justify-content: center; margin-top: 18px; }
+  .btn.small { margin: 0; padding: 8px 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>🔢 Merge</h1>
+  <div class="stat"><small>Score</small><b id="score">0</b></div>
+  <div class="stat"><small>Best</small><b id="best">0</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div class="wrap">
+  <p class="help">Swipe or use arrow keys / WASD. Same numbers merge!</p>
+  <div id="board"></div>
+  <div class="row"><button class="btn small" id="new">New game</button></div>
+</div>
+
+<div class="overlay" id="end">
+  <div class="panel">
+    <h2 id="endtitle">No moves left</h2>
+    <div class="big" id="final">0</div>
+    <p id="endmsg"></p>
+    <button class="btn" id="again">Play again</button>
+  </div>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const board = $('board');
+  const N = 4;
+  const PAL = {
+    2: '#fff3c4', 4: '#ffe08a', 8: '#ffb066', 16: '#ff8a5c', 32: '#ff6b81', 64: '#ff4fa3',
+    128: '#d86bff', 256: '#a78bff', 512: '#6c8cff', 1024: '#38e1ff', 2048: '#b6ff4a'
+  };
+  let grid, score, nextId, els, over, won;
+  $('best').textContent = Arcade.best('merge');
+
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const d = document.createElement('div'); d.className = 'cell';
+    d.style.left = c * 25 + '%'; d.style.top = r * 25 + '%'; board.appendChild(d);
+  }
+
+  const pos = t => `translate(${t.c * 100}%, ${t.r * 100}%)`;
+  function style(el, v) {
+    el.firstChild.textContent = v;
+    el.firstChild.style.background = PAL[v] || '#ffffff';
+    el.classList.toggle('big', v >= 128 && v < 1024);
+    el.classList.toggle('huge', v >= 1024);
+  }
+  function makeEl(t) {
+    const el = document.createElement('div'); el.className = 'tile';
+    el.appendChild(document.createElement('i'));
+    style(el, t.v); el.style.transform = pos(t);
+    board.appendChild(el); els.set(t.id, el);
+  }
+  function spawn() {
+    const free = [];
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!grid[r][c]) free.push([r, c]);
+    if (!free.length) return;
+    const [r, c] = free[(Math.random() * free.length) | 0];
+    const t = { id: nextId++, v: Math.random() < .9 ? 2 : 4, r, c };
+    grid[r][c] = t; makeEl(t);
+  }
+
+  function newGame() {
+    board.querySelectorAll('.tile').forEach(e => e.remove());
+    grid = Array.from({ length: N }, () => Array(N).fill(null));
+    els = new Map(); nextId = 1; score = 0; over = false; won = false;
+    $('score').textContent = 0; $('end').classList.remove('show');
+    spawn(); spawn();
+  }
+
+  const VEC = { up: [-1, 0], right: [0, 1], down: [1, 0], left: [0, -1] };
+  function move(dir) {
+    if (over) return;
+    const [dr, dc] = VEC[dir];
+    const rs = [0, 1, 2, 3], cs = [0, 1, 2, 3];
+    if (dr === 1) rs.reverse(); if (dc === 1) cs.reverse();
+    let moved = false, mergedCount = 0, topMerge = 0;
+    const merged = new Set();
+    for (const r of rs) for (const c of cs) {
+      const t = grid[r][c]; if (!t) continue;
+      let nr = r, nc = c, target = null;
+      for (;;) {
+        const tr = nr + dr, tc = nc + dc;
+        if (tr < 0 || tr >= N || tc < 0 || tc >= N) break;
+        const o = grid[tr][tc];
+        if (!o) { nr = tr; nc = tc; continue; }
+        if (o.v === t.v && !merged.has(o.id)) target = o;
+        break;
+      }
+      if (target) {
+        grid[r][c] = null; moved = true;
+        t.r = target.r; t.c = target.c;
+        const dead = els.get(t.id); els.delete(t.id);
+        dead.style.transform = pos(t); dead.style.zIndex = 1;
+        setTimeout(() => dead.remove(), 130);
+        target.v *= 2; merged.add(target.id);
+        score += target.v; mergedCount++; topMerge = Math.max(topMerge, target.v);
+        const el = els.get(target.id);
+        setTimeout(() => { style(el, target.v); el.classList.remove('merged'); void el.offsetWidth; el.classList.add('merged'); }, 90);
+      } else if (nr !== r || nc !== c) {
+        grid[r][c] = null; grid[nr][nc] = t; t.r = nr; t.c = nc; moved = true;
+        els.get(t.id).style.transform = pos(t);
+      }
+    }
+    if (!moved) { Arcade.tone(140, 0.08, 'square', 0.06, 100); return; }
+
+    if (mergedCount) {
+      const lvl = Math.log2(topMerge);
+      setTimeout(() => { Arcade.note(lvl, 0.3, 'triangle', 0.2); if (mergedCount > 1) Arcade.note(lvl + 2, 0.3, 'sine', 0.1); }, 80);
+    } else Arcade.tone(300, 0.05, 'sine', 0.05, 200);
+
+    $('score').textContent = score;
+    if (Arcade.setBest('merge', score)) $('best').textContent = score;
+    setTimeout(() => { spawn(); check(topMerge); }, 120);
+  }
+
+  function check(topMerge) {
+    if (!won && topMerge >= 2048) {
+      won = true; Arcade.chord([0, 2, 4, 7, 9, 12], 0.8);
+      $('endtitle').textContent = '2048! 🎉'; $('final').textContent = score; $('endmsg').textContent = 'You can keep playing for more.';
+      $('again').textContent = 'Keep going';
+      $('end').classList.add('show');
+      $('again').onclick = () => { $('end').classList.remove('show'); $('again').onclick = restart; $('again').textContent = 'Play again'; };
+      return;
+    }
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!grid[r][c]) return; // empty cell = still playable
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      const v = grid[r][c].v;
+      if (c + 1 < N && grid[r][c + 1].v === v) return;
+      if (r + 1 < N && grid[r + 1][c].v === v) return;
+    }
+    over = true;
+    $('endtitle').textContent = 'No moves left'; $('final').textContent = score;
+    $('endmsg').innerHTML = Arcade.best('merge') <= score ? '<span class="badge-new">NEW BEST!</span>' : 'Best: ' + Arcade.best('merge');
+    Arcade.tone(260, 0.5, 'sawtooth', 0.1, 70);
+    $('end').classList.add('show');
+  }
+
+  function restart() { newGame(); }
+  $('again').onclick = restart; $('new').onclick = restart;
+
+  addEventListener('keydown', e => {
+    const m = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right' }[e.key];
+    if (m) { e.preventDefault(); move(m); }
+  });
+  let sx, sy;
+  const area = document.body;
+  area.addEventListener('pointerdown', e => { if (e.target.closest('button,a')) return; sx = e.clientX; sy = e.clientY; });
+  area.addEventListener('pointerup', e => {
+    if (sx == null) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return;
+    move(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+  });
+
+  newGame();
+})();
+</script>
+</body>
+</html>

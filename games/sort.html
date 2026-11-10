@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Tube Sort · ZING!</title>
+<link rel="stylesheet" href="../css/style.css">
+<style>
+  body { overflow-x: hidden; user-select: none; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 4px 16px 40px; text-align: center; }
+  .help { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+  #tubes { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px 18px; padding: 40px 0 10px; min-height: 280px; }
+  .tube {
+    width: 58px; height: 200px; border-radius: 10px 10px 30px 30px; border: 3px solid rgba(255,255,255,.35);
+    background: rgba(255,255,255,.06); display: flex; flex-direction: column-reverse; padding: 4px; gap: 3px;
+    cursor: pointer; transition: transform .18s cubic-bezier(.2,1.5,.4,1), box-shadow .18s, border-color .18s; position: relative;
+  }
+  .tube:hover { border-color: rgba(255,255,255,.65); }
+  .tube.sel { transform: translateY(-26px); border-color: #fff; box-shadow: 0 0 24px rgba(255,255,255,.5); }
+  .tube.full { border-color: var(--lime); box-shadow: 0 0 20px -4px var(--lime); }
+  .tube.shake { animation: shake .3s; }
+  @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+  .seg { flex: 1 1 0; border-radius: 6px; box-shadow: inset 0 -5px 0 rgba(0,0,0,.18), inset 0 4px 0 rgba(255,255,255,.28); animation: drop .22s ease-out; }
+  .seg.top-sel { filter: brightness(1.25); }
+  @keyframes drop { from { transform: translateY(-40px) scaleY(.6); opacity: .2; } to { transform: none; opacity: 1; } }
+  .row { display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+  .btn.small { margin: 0; padding: 8px 20px; font-size: 14px; }
+  .btn.alt { background: var(--card); color: var(--ink); box-shadow: none; border: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="back" href="../index.html">← Arcade</a>
+  <h1>🧪 Tube Sort</h1>
+  <div class="stat"><small>Level</small><b id="lvl">1</b></div>
+  <div class="stat"><small>Moves</small><b id="moves">0</b></div>
+  <button class="icon-btn" id="mute"></button>
+</div>
+<div class="wrap">
+  <p class="help">Tap a tube, then another, to pour the top colour. Sort every colour into its own tube.</p>
+  <div id="tubes"></div>
+  <div class="row">
+    <button class="btn small alt" id="undo">↶ Undo</button>
+    <button class="btn small alt" id="restart">⟲ Restart</button>
+    <button class="btn small alt" id="addtube">＋ Extra tube</button>
+  </div>
+</div>
+
+<div class="overlay" id="win">
+  <div class="panel">
+    <h2>Sorted! 🎉</h2>
+    <p id="winmsg"></p>
+    <button class="btn" id="next">Next level</button>
+  </div>
+</div>
+
+<script src="../js/common.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const CAP = 4;
+  const COL = ['#ff4f6d', '#38e1ff', '#b6ff4a', '#ffd23f', '#a06bff', '#ff9a3d', '#ff6bd6', '#2ee6a6', '#5b7cff', '#d9d9e8'];
+  let level = Math.max(1, Math.floor(Arcade.best('sort')) + 0) ; // resume at the best level reached
+  let tubes, start, sel = null, moves = 0, hist = [], extraUsed = false, solved = false;
+
+  const nColors = L => Math.min(3 + Math.floor((L - 1) / 2), COL.length);
+
+  function make(L) {
+    const n = nColors(L);
+    for (;;) {
+      const cells = []; for (let c = 0; c < n; c++) for (let k = 0; k < CAP; k++) cells.push(c);
+      for (let i = cells.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0;[cells[i], cells[j]] = [cells[j], cells[i]]; }
+      const t = []; for (let i = 0; i < n; i++) t.push(cells.slice(i * CAP, (i + 1) * CAP));
+      t.push([], []);
+      if (!t.some(isDone) || n === 1) return t;           // avoid pre-solved tubes
+    }
+  }
+  const isDone = t => t.length === CAP && t.every(c => c === t[0]);
+  const clone = t => t.map(x => x.slice());
+
+  function load(L, keep) {
+    level = L; $('lvl').textContent = L;
+    if (!keep) start = make(L);
+    tubes = clone(start); sel = null; moves = 0; hist = []; extraUsed = false; solved = false; $('addtube').disabled = false; $('addtube').style.opacity = 1;
+    $('moves').textContent = 0; render();
+  }
+
+  function render() {
+    const box = $('tubes'); box.innerHTML = '';
+    tubes.forEach((t, i) => {
+      const d = document.createElement('div'); d.className = 'tube' + (sel === i ? ' sel' : '') + (isDone(t) ? ' full' : '');
+      t.forEach((c, k) => { const s = document.createElement('div'); s.className = 'seg'; s.style.background = COL[c]; s.style.animation = (render.fresh && render.fresh.has(i + ':' + k)) ? '' : 'none'; d.appendChild(s); });
+      d.onclick = () => tap(i); d.dataset.i = i; box.appendChild(d);
+    });
+    render.fresh = null;
+  }
+
+  function top(t) { return t.length ? t[t.length - 1] : -1; }
+  function runLen(t) { let n = 0; const c = top(t); for (let i = t.length - 1; i >= 0 && t[i] === c; i--) n++; return n; }
+  function canPour(a, b) { const A = tubes[a], B = tubes[b]; return a !== b && A.length && B.length < CAP && (!B.length || top(B) === top(A)); }
+
+  function tap(i) {
+    if (solved) return;
+    if (sel === null) {
+      if (!tubes[i].length) return;
+      sel = i; Arcade.note(top(tubes[i]) + 2, .1, 'sine', .1); render(); return;
+    }
+    if (sel === i) { sel = null; render(); return; }
+    if (!canPour(sel, i)) {
+      Arcade.tone(160, .1, 'square', .07, 110);
+      const bad = sel;
+      sel = tubes[i].length ? i : null;      // switch selection to a tube that has something in it
+      render();
+      const el = document.querySelector(`.tube[data-i="${bad}"]`);
+      if (el) el.classList.add('shake');
+      return;
+    }
+    pour(sel, i);
+  }
+
+  function pour(a, b) {
+    hist.push(clone(tubes));
+    const A = tubes[a], B = tubes[b], c = top(A), fresh = new Set();
+    let n = Math.min(runLen(A), CAP - B.length);
+    for (let k = 0; k < n; k++) { A.pop(); B.push(c); fresh.add(b + ':' + (B.length - 1)); }
+    moves++; $('moves').textContent = moves; sel = null;
+    render.fresh = fresh; render();
+    for (let k = 0; k < n; k++) Arcade.note(c + 1 + k, .16, 'triangle', .15);
+    if (isDone(B)) setTimeout(() => Arcade.chord([c, c + 2, c + 4], .4), 120);
+    if (tubes.every(t => !t.length || isDone(t))) win();
+  }
+
+  function win() {
+    solved = true;
+    Arcade.setBest('sort', level + 1);   // best = highest level unlocked
+    setTimeout(() => { Arcade.chord([0, 2, 4, 7, 9, 12], .7); $('winmsg').textContent = `Level ${level} cleared in ${moves} moves.`; $('win').classList.add('show'); }, 450);
+  }
+
+  $('undo').onclick = () => { if (!hist.length || solved) return; tubes = hist.pop(); moves = Math.max(0, moves - 1); $('moves').textContent = moves; sel = null; render(); Arcade.tone(300, .08, 'sine', .08, 200); };
+  $('restart').onclick = () => { load(level, true); Arcade.tone(500, .15, 'sine', .08, 250); };
+  $('addtube').onclick = () => { if (extraUsed || solved) return; extraUsed = true; tubes.push([]); $('addtube').disabled = true; $('addtube').style.opacity = .4; render(); Arcade.pop(1.2); };
+  $('next').onclick = () => { $('win').classList.remove('show'); load(level + 1); };
+
+  load(level);
+})();
+</script>
+</body>
+</html>
